@@ -16,39 +16,30 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
 
     private readonly AsyncLock _lock = new();
 
-    // Unified initializer; sync overloads wrap into this.
+    // Unified initializer entry point
     private Func<T, CancellationToken, ValueTask>? _initAsync;
+
+    // Backing delegates (avoid ctor closures)
+    private Action<T>? _init;
+    private Action<T, CancellationToken>? _initCt;
+    private Func<T, ValueTask>? _initVt;
 
     public AsyncInitializer(Action<T> init)
     {
-        if (init is null)
-            throw new ArgumentNullException(nameof(init));
-
-        _initAsync = (value, _) =>
-        {
-            init(value);
-            return ValueTask.CompletedTask;
-        };
+        _init = init ?? throw new ArgumentNullException(nameof(init));
+        _initAsync = InitFromAction;
     }
 
     public AsyncInitializer(Action<T, CancellationToken> init)
     {
-        if (init is null)
-            throw new ArgumentNullException(nameof(init));
-
-        _initAsync = (value, ct) =>
-        {
-            init(value, ct);
-            return ValueTask.CompletedTask;
-        };
+        _initCt = init ?? throw new ArgumentNullException(nameof(init));
+        _initAsync = InitFromActionCt;
     }
 
     public AsyncInitializer(Func<T, ValueTask> initAsync)
     {
-        if (initAsync is null)
-            throw new ArgumentNullException(nameof(initAsync));
-
-        _initAsync = (value, _) => initAsync(value);
+        _initVt = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
+        _initAsync = InitFromFuncVt;
     }
 
     public AsyncInitializer(Func<T, CancellationToken, ValueTask> initAsync) => _initAsync = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
@@ -61,27 +52,7 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
         if (_initialized.Value)
             return ValueTask.CompletedTask;
 
-        return Slow(value, cancellationToken);
-
-        async ValueTask Slow(T val, CancellationToken ct)
-        {
-            using (await _lock.Lock(ct)
-                              .NoSync())
-            {
-                if (_disposed.Value)
-                    throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
-
-                if (_initialized.Value)
-                    return;
-
-                Func<T, CancellationToken, ValueTask> init = _initAsync ?? throw new InvalidOperationException("No initializer configured.");
-                await init(val, ct)
-                    .NoSync();
-
-                _initialized.Value = true;
-                _initAsync = null; // allow GC
-            }
-        }
+        return InitSlowAsync(value, cancellationToken);
     }
 
     public void InitSync(T value, CancellationToken cancellationToken = default)
@@ -92,22 +63,7 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
         if (_initialized.Value)
             return;
 
-        using (_lock.LockSync(cancellationToken))
-        {
-            if (_disposed.Value)
-                throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
-
-            if (_initialized.Value)
-                return;
-
-            Func<T, CancellationToken, ValueTask> init = _initAsync ?? throw new InvalidOperationException("No initializer configured.");
-
-            ValueTask vt = init(value, cancellationToken);
-            Wait(vt);
-
-            _initialized.Value = true;
-            _initAsync = null; // allow GC
-        }
+        InitSlowSync(value, cancellationToken);
     }
 
     public bool IsInitialized => _initialized.Value;
@@ -119,7 +75,7 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
 
         using (_lock.LockSync())
         {
-            _initAsync = null;
+            ClearInitializer_NoLock();
             _initialized.Value = false;
         }
 
@@ -134,27 +90,77 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
         using (await _lock.Lock()
                           .NoSync())
         {
-            _initAsync = null;
+            ClearInitializer_NoLock();
             _initialized.Value = false;
         }
 
         GC.SuppressFinalize(this);
     }
 
-    private static void Wait(ValueTask valueTask)
+    private ValueTask InitFromAction(T value, CancellationToken _)
     {
-        if (valueTask.IsCompletedSuccessfully)
-        {
-            valueTask.GetAwaiter()
-                     .GetResult();
-            return;
-        }
+        _init!.Invoke(value);
+        return ValueTask.CompletedTask;
+    }
 
-        if (SynchronizationContext.Current is null)
+    private ValueTask InitFromActionCt(T value, CancellationToken ct)
+    {
+        _initCt!.Invoke(value, ct);
+        return ValueTask.CompletedTask;
+    }
+
+    private ValueTask InitFromFuncVt(T value, CancellationToken _) => _initVt!.Invoke(value);
+
+    private async ValueTask InitSlowAsync(T value, CancellationToken ct)
+    {
+        using (await _lock.Lock(ct)
+                          .NoSync())
         {
-            valueTask.AsTask()
-                     .GetAwaiter()
-                     .GetResult();
+            if (_disposed.Value)
+                throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
+
+            if (_initialized.Value)
+                return;
+
+            Func<T, CancellationToken, ValueTask> init = _initAsync ?? throw new InvalidOperationException("No initializer configured.");
+
+            await init(value, ct)
+                .NoSync();
+
+            _initialized.Value = true;
+
+            // allow GC of captured graphs / callbacks
+            ClearInitializer_NoLock();
         }
+    }
+
+    private void InitSlowSync(T value, CancellationToken cancellationToken)
+    {
+        using (_lock.LockSync(cancellationToken))
+        {
+            if (_disposed.Value)
+                throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
+
+            if (_initialized.Value)
+                return;
+
+            Func<T, CancellationToken, ValueTask> init = _initAsync ?? throw new InvalidOperationException("No initializer configured.");
+
+            init(value, cancellationToken).AwaitSync();
+
+            _initialized.Value = true;
+
+            // allow GC of captured graphs / callbacks
+            ClearInitializer_NoLock();
+        }
+    }
+
+    private void ClearInitializer_NoLock()
+    {
+        _initAsync = null;
+
+        _init = null;
+        _initCt = null;
+        _initVt = null;
     }
 }
