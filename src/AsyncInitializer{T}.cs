@@ -78,8 +78,6 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
             ClearInitializer_NoLock();
             _initialized.Value = false;
         }
-
-        GC.SuppressFinalize(this);
     }
 
     public async ValueTask DisposeAsync()
@@ -93,8 +91,6 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
             ClearInitializer_NoLock();
             _initialized.Value = false;
         }
-
-        GC.SuppressFinalize(this);
     }
 
     private ValueTask InitFromAction(T value, CancellationToken _)
