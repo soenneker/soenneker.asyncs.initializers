@@ -68,6 +68,9 @@ public sealed class AsyncInitializer : IAsyncInitializer
 
     public bool IsInitialized => _initialized.Value;
 
+    /// <summary>
+    /// Releases resources used by the current instance.
+    /// </summary>
     public void Dispose()
     {
         if (!_disposed.CompareAndSet(false, true))
@@ -80,6 +83,10 @@ public sealed class AsyncInitializer : IAsyncInitializer
         }
     }
 
+    /// <summary>
+    /// Asynchronously releases resources used by the current instance.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous operation.</returns>
     public async ValueTask DisposeAsync()
     {
         if (!_disposed.CompareAndSet(false, true))

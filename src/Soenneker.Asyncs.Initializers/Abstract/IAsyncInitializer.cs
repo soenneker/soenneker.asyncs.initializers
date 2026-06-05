@@ -16,6 +16,10 @@ public interface IAsyncInitializer : IDisposable, IAsyncDisposable
     /// <param name="cancellationToken">A token used to cancel waiting for initialization.</param>
     ValueTask Init(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Synchronously initializes the instance.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
     void InitSync(CancellationToken cancellationToken = default);
 
     /// <summary>
