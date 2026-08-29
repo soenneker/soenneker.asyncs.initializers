@@ -14,6 +14,7 @@ public interface IAsyncInitializer : IDisposable, IAsyncDisposable
     /// Concurrent callers will await the same initialization.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel waiting for initialization.</param>
+    /// <returns>A task that completes when the init operation is complete.</returns>
     ValueTask Init(CancellationToken cancellationToken = default);
 
     /// <summary>

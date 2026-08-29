@@ -4,10 +4,6 @@ using System.Threading.Tasks;
 
 namespace Soenneker.Asyncs.Initializers.Abstract;
 
-/// <summary>
-/// A lightweight, async-safe, allocation-free one-time initialization gate with a typed parameter. Ensures a given asynchronous initialization routine runs exactly once, even under concurrent callers, with support for cancellation, safe publication, and disposal.
-/// </summary>
-/// <typeparam name="T">The type of the parameter passed to the initialization method.</typeparam>
 public interface IAsyncInitializer<in T> : IDisposable, IAsyncDisposable
 {
     /// <summary>
@@ -16,13 +12,14 @@ public interface IAsyncInitializer<in T> : IDisposable, IAsyncDisposable
     /// </summary>
     /// <param name="value">The value to pass to the initialization method.</param>
     /// <param name="cancellationToken">A token used to cancel waiting for initialization.</param>
+    /// <returns>A task that completes when the init operation is complete.</returns>
     ValueTask Init(T value, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Synchronously initializes the instance.
     /// </summary>
-    /// <param name="value">The value.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="value">Value used to initialize the instance.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
     void InitSync(T value, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -30,4 +27,3 @@ public interface IAsyncInitializer<in T> : IDisposable, IAsyncDisposable
     /// </summary>
     bool IsInitialized { get; }
 }
-
