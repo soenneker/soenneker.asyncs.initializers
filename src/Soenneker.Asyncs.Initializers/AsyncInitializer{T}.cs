@@ -8,7 +8,7 @@ using Soenneker.Extensions.ValueTask;
 
 namespace Soenneker.Asyncs.Initializers;
 
-///<inheritdoc cref="IAsyncInitializer{T}"/>
+/// <inheritdoc cref="IAsyncInitializer{T}"/>
 public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
 {
     private ValueAtomicBool _initialized;

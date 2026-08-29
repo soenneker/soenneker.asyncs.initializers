@@ -4,6 +4,9 @@ using System.Threading.Tasks;
 
 namespace Soenneker.Asyncs.Initializers.Abstract;
 
+/// <summary>
+/// Initializes a value asynchronously and exposes it after initialization completes.
+/// </summary>
 public interface IAsyncInitializer<in T> : IDisposable, IAsyncDisposable
 {
     /// <summary>
