@@ -8,7 +8,6 @@ using Soenneker.Extensions.ValueTask;
 
 namespace Soenneker.Asyncs.Initializers;
 
-/// <inheritdoc cref="IAsyncInitializer{T}"/>
 public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
 {
     private ValueAtomicBool _initialized;
@@ -16,33 +15,24 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
 
     private readonly AsyncLock _lock = new();
 
-    // Unified initializer entry point
-    private Func<T, CancellationToken, ValueTask>? _initAsync;
-
-    // Backing delegates (avoid ctor closures)
-    private Action<T>? _init;
-    private Action<T, CancellationToken>? _initCt;
-    private Func<T, ValueTask>? _initVt;
+    private Delegate? _initializer;
 
     public AsyncInitializer(Action<T> init)
     {
-        _init = init ?? throw new ArgumentNullException(nameof(init));
-        _initAsync = InitFromAction;
+        _initializer = init ?? throw new ArgumentNullException(nameof(init));
     }
 
     public AsyncInitializer(Action<T, CancellationToken> init)
     {
-        _initCt = init ?? throw new ArgumentNullException(nameof(init));
-        _initAsync = InitFromActionCt;
+        _initializer = init ?? throw new ArgumentNullException(nameof(init));
     }
 
     public AsyncInitializer(Func<T, ValueTask> initAsync)
     {
-        _initVt = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
-        _initAsync = InitFromFuncVt;
+        _initializer = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
     }
 
-    public AsyncInitializer(Func<T, CancellationToken, ValueTask> initAsync) => _initAsync = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
+    public AsyncInitializer(Func<T, CancellationToken, ValueTask> initAsync) => _initializer = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
 
     public ValueTask Init(T value, CancellationToken cancellationToken = default)
     {
@@ -68,9 +58,6 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
 
     public bool IsInitialized => _initialized.Value;
 
-    /// <summary>
-    /// Releases resources used by the current instance.
-    /// </summary>
     public void Dispose()
     {
         if (!_disposed.CompareAndSet(false, true))
@@ -83,10 +70,6 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
         }
     }
 
-    /// <summary>
-    /// Asynchronously releases resources used by the current instance.
-    /// </summary>
-    /// <returns>A task that represents the asynchronous operation.</returns>
     public async ValueTask DisposeAsync()
     {
         if (!_disposed.CompareAndSet(false, true))
@@ -100,19 +83,24 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
         }
     }
 
-    private ValueTask InitFromAction(T value, CancellationToken _)
+    private ValueTask InvokeInitializer(T value, CancellationToken ct)
     {
-        _init!.Invoke(value);
-        return ValueTask.CompletedTask;
+        switch (_initializer)
+        {
+            case Func<T, CancellationToken, ValueTask> callback:
+                return callback(value, ct);
+            case Func<T, ValueTask> callback:
+                return callback(value);
+            case Action<T> callback:
+                callback(value);
+                return ValueTask.CompletedTask;
+            case Action<T, CancellationToken> callback:
+                callback(value, ct);
+                return ValueTask.CompletedTask;
+            default:
+                throw new InvalidOperationException("No initializer configured.");
+        }
     }
-
-    private ValueTask InitFromActionCt(T value, CancellationToken ct)
-    {
-        _initCt!.Invoke(value, ct);
-        return ValueTask.CompletedTask;
-    }
-
-    private ValueTask InitFromFuncVt(T value, CancellationToken _) => _initVt!.Invoke(value);
 
     private async ValueTask InitSlowAsync(T value, CancellationToken ct)
     {
@@ -125,9 +113,7 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
             if (_initialized.Value)
                 return;
 
-            Func<T, CancellationToken, ValueTask> init = _initAsync ?? throw new InvalidOperationException("No initializer configured.");
-
-            await init(value, ct)
+            await InvokeInitializer(value, ct)
                 .NoSync();
 
             _initialized.Value = true;
@@ -147,9 +133,7 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
             if (_initialized.Value)
                 return;
 
-            Func<T, CancellationToken, ValueTask> init = _initAsync ?? throw new InvalidOperationException("No initializer configured.");
-
-            init(value, cancellationToken).AwaitSync();
+            InvokeInitializer(value, cancellationToken).AwaitSync();
 
             _initialized.Value = true;
 
@@ -158,12 +142,5 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
         }
     }
 
-    private void ClearInitializer_NoLock()
-    {
-        _initAsync = null;
-
-        _init = null;
-        _initCt = null;
-        _initVt = null;
-    }
+    private void ClearInitializer_NoLock() => _initializer = null;
 }
