@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Soenneker.Asyncs.Initializers.Abstract;
@@ -11,6 +12,7 @@ namespace Soenneker.Asyncs.Initializers;
 public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
 {
     private ValueAtomicBool _initialized;
+    private readonly byte _initializerKind;
     private ValueAtomicBool _disposed;
 
     private readonly AsyncLock _lock = new();
@@ -20,43 +22,52 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
     public AsyncInitializer(Action<T> init)
     {
         _initializer = init ?? throw new ArgumentNullException(nameof(init));
+        _initializerKind = 0;
     }
 
     public AsyncInitializer(Action<T, CancellationToken> init)
     {
         _initializer = init ?? throw new ArgumentNullException(nameof(init));
+        _initializerKind = 1;
     }
 
     public AsyncInitializer(Func<T, ValueTask> initAsync)
     {
         _initializer = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
+        _initializerKind = 2;
     }
 
-    public AsyncInitializer(Func<T, CancellationToken, ValueTask> initAsync) => _initializer = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
+    public AsyncInitializer(Func<T, CancellationToken, ValueTask> initAsync)
+    {
+        _initializer = initAsync ?? throw new ArgumentNullException(nameof(initAsync));
+        _initializerKind = 3;
+    }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask Init(T value, CancellationToken cancellationToken = default)
     {
         if (_disposed.Value)
             throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
 
-        if (_initialized.Value)
+        if (_initialized.Read())
             return ValueTask.CompletedTask;
 
         return InitSlowAsync(value, cancellationToken);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void InitSync(T value, CancellationToken cancellationToken = default)
     {
         if (_disposed.Value)
             throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
 
-        if (_initialized.Value)
+        if (_initialized.Read())
             return;
 
         InitSlowSync(value, cancellationToken);
     }
 
-    public bool IsInitialized => _initialized.Value;
+    public bool IsInitialized => _initialized.Read();
 
     public void Dispose()
     {
@@ -66,7 +77,7 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
         using (_lock.LockSync())
         {
             ClearInitializer_NoLock();
-            _initialized.Value = false;
+            _initialized.VolatileWrite(false);
         }
     }
 
@@ -79,26 +90,26 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
                           .NoSync())
         {
             ClearInitializer_NoLock();
-            _initialized.Value = false;
+            _initialized.VolatileWrite(false);
         }
     }
 
     private ValueTask InvokeInitializer(T value, CancellationToken ct)
     {
-        switch (_initializer)
+        // Each constructor fixes the callback type. The tag occupies existing field
+        // padding and avoids repeated delegate type tests during initialization.
+        switch (_initializerKind)
         {
-            case Func<T, CancellationToken, ValueTask> callback:
-                return callback(value, ct);
-            case Func<T, ValueTask> callback:
-                return callback(value);
-            case Action<T> callback:
-                callback(value);
-                return ValueTask.CompletedTask;
-            case Action<T, CancellationToken> callback:
-                callback(value, ct);
-                return ValueTask.CompletedTask;
+            case 0:
+                Unsafe.As<Action<T>>(_initializer)!(value);
+                return default;
+            case 1:
+                Unsafe.As<Action<T, CancellationToken>>(_initializer)!(value, ct);
+                return default;
+            case 2:
+                return Unsafe.As<Func<T, ValueTask>>(_initializer)!(value);
             default:
-                throw new InvalidOperationException("No initializer configured.");
+                return Unsafe.As<Func<T, CancellationToken, ValueTask>>(_initializer)!(value, ct);
         }
     }
 
@@ -110,13 +121,13 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
             if (_disposed.Value)
                 throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
 
-            if (_initialized.Value)
+            if (_initialized.Read())
                 return;
 
             await InvokeInitializer(value, ct)
                 .NoSync();
 
-            _initialized.Value = true;
+            _initialized.VolatileWrite(true);
 
             // allow GC of captured graphs / callbacks
             ClearInitializer_NoLock();
@@ -130,12 +141,12 @@ public sealed class AsyncInitializer<T> : IAsyncInitializer<T>
             if (_disposed.Value)
                 throw new ObjectDisposedException(nameof(AsyncInitializer<T>));
 
-            if (_initialized.Value)
+            if (_initialized.Read())
                 return;
 
             InvokeInitializer(value, cancellationToken).AwaitSync();
 
-            _initialized.Value = true;
+            _initialized.VolatileWrite(true);
 
             // allow GC of captured graphs / callbacks
             ClearInitializer_NoLock();
