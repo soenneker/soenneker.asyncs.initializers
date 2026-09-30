@@ -12,7 +12,7 @@ public sealed class InitializerRegressionTests
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
-    public async Task Every_callback_shape_runs_once(int shape)
+    public async ValueTask Every_callback_shape_runs_once(int shape)
     {
         int calls = 0;
         using var cancellation = new CancellationTokenSource();
@@ -38,7 +38,7 @@ public sealed class InitializerRegressionTests
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
-    public async Task Generic_callback_shapes_preserve_state_and_token(int shape)
+    public async ValueTask Generic_callback_shapes_preserve_state_and_token(int shape)
     {
         int calls = 0, observedValue = 0;
         CancellationToken observedToken = default;
@@ -60,7 +60,7 @@ public sealed class InitializerRegressionTests
     }
 
     [Test]
-    public async Task Failure_can_retry_and_disposal_rejects_further_initialization()
+    public async ValueTask Failure_can_retry_and_disposal_rejects_further_initialization()
     {
         int calls = 0;
         var initializer = new AsyncInitializer((Action)(() =>
