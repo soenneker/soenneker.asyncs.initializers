@@ -12,7 +12,7 @@ public sealed class InitializerRegressionTests
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
-    public async ValueTask Every_callback_shape_runs_once(int shape)
+    public async ValueTask Every_callback_shape_runs_once(int shape, CancellationToken cancellationToken)
     {
         int calls = 0;
         using var cancellation = new CancellationTokenSource();
@@ -25,7 +25,7 @@ public sealed class InitializerRegressionTests
             _ => new((Func<CancellationToken, ValueTask>)(async ct => { await Task.Yield(); observed = ct; calls++; }))
         };
 
-        await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(async () => await initializer.Init(cancellation.Token))));
+        await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(async () => await initializer.Init(cancellation.Token), cancellationToken: cancellationToken)));
         initializer.InitSync(cancellation.Token);
         await Assert.That(calls).IsEqualTo(1);
         await Assert.That(initializer.IsInitialized).IsTrue();
@@ -38,7 +38,7 @@ public sealed class InitializerRegressionTests
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
-    public async ValueTask Generic_callback_shapes_preserve_state_and_token(int shape)
+    public async ValueTask Generic_callback_shapes_preserve_state_and_token(int shape, CancellationToken cancellationToken)
     {
         int calls = 0, observedValue = 0;
         CancellationToken observedToken = default;
@@ -60,7 +60,7 @@ public sealed class InitializerRegressionTests
     }
 
     [Test]
-    public async ValueTask Failure_can_retry_and_disposal_rejects_further_initialization()
+    public async ValueTask Failure_can_retry_and_disposal_rejects_further_initialization(CancellationToken cancellationToken)
     {
         int calls = 0;
         var initializer = new AsyncInitializer((Action)(() =>
@@ -68,10 +68,10 @@ public sealed class InitializerRegressionTests
             if (++calls == 1)
                 throw new InvalidOperationException();
         }));
-        await Assert.That(async () => await initializer.Init()).Throws<InvalidOperationException>();
-        await initializer.Init();
+        await Assert.That(async () => await initializer.Init(cancellationToken: cancellationToken)).Throws<InvalidOperationException>();
+        await initializer.Init(cancellationToken: cancellationToken);
         await initializer.DisposeAsync();
-        await Assert.That(() => initializer.InitSync()).Throws<ObjectDisposedException>();
+        await Assert.That(() => initializer.InitSync(cancellationToken: cancellationToken)).Throws<ObjectDisposedException>();
         await Assert.That(calls).IsEqualTo(2);
     }
 }
